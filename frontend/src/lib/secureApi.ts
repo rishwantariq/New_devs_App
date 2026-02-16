@@ -13,6 +13,8 @@ import { supabase } from './supabase';
 import { sessionManager } from '../utils/sessionManager';
 import { withRetry, handleApiError, classifyError } from '../utils/apiErrorHandler';
 
+type SessionLike = { access_token: string; refresh_token?: string };
+
 // Get backend URL with fallback for misconfigured production environments
 const getBackendUrl = () => {
   // For production/staging (non-localhost), use relative URLs to avoid CORS
@@ -73,9 +75,10 @@ export class SecureAPIClient {
    */
   private interceptDirectQueries() {
     if (import.meta.env.DEV) {
+      const sb = supabase as any;
+      if (typeof sb.from !== 'function') return; // LocalAuthClient has no .from
+      const originalFrom = sb.from;
       const ENFORCE = (import.meta.env as any).VITE_ENFORCE_SECURE_API === 'true';
-      const originalFrom = supabase.from;
-      // Temporary dev allowlist for legacy direct queries while migrating to SecureAPI
       const DEV_ALLOWLIST = new Set([
         'user_permissions',
         'users_city',
@@ -84,7 +87,7 @@ export class SecureAPIClient {
         'landlord_details'
       ]);
 
-      supabase.from = (table: string) => {
+      sb.from = (table: string) => {
         const stack = new Error().stack || '';
         const violation = `SECURITY VIOLATION: Direct Supabase query to table '${table}'`;
 
@@ -466,7 +469,7 @@ export class SecureAPIClient {
   /**
    * Wait for a valid Supabase session (with timeout) so API calls don't race login.
    */
-  private async waitForSession(timeoutMs: number = 7000): Promise<import('@supabase/supabase-js').Session | null> {
+  private async waitForSession(timeoutMs: number = 7000): Promise<SessionLike | null> {
     // Helper to read token from Supabase storage as last resort
     const getTokenFromStorage = (): string | null => {
       try {
@@ -502,25 +505,27 @@ export class SecureAPIClient {
     // Listen + poll concurrently
     let unsubscribe: (() => void) | null = null;
     let resolved = false;
-    const sessionPromise = new Promise<import('@supabase/supabase-js').Session | null>((resolve) => {
+    const sessionPromise = new Promise<SessionLike | null>((resolve) => {
       const { data } = supabase.auth.onAuthStateChange((_event, session) => {
         if (!resolved && session?.access_token) {
           resolved = true;
-          if (unsubscribe) unsubscribe();
-          resolve(session);
+          const fn = unsubscribe;
+          if (typeof fn === 'function') fn();
+          resolve({ access_token: session.access_token, refresh_token: session.refresh_token ?? '' });
         }
       });
       unsubscribe = () => data.subscription.unsubscribe();
     });
 
-    const pollingPromise = new Promise<import('@supabase/supabase-js').Session | null>(async (resolve) => {
+    const pollingPromise = new Promise<SessionLike | null>(async (resolve) => {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
         const token = await nowHasToken();
         if (token) {
           resolved = true;
-          if (unsubscribe) unsubscribe();
-          resolve({ access_token: token } as any);
+          const fn = unsubscribe;
+          if (typeof fn === 'function') fn();
+          resolve({ access_token: token });
           return;
         }
         await new Promise(r => setTimeout(r, 200));
@@ -529,8 +534,8 @@ export class SecureAPIClient {
     });
 
     const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
-    const result = await Promise.race([sessionPromise, pollingPromise, timeoutPromise]);
-    if (unsubscribe) unsubscribe();
+    const result = await Promise.race([sessionPromise, pollingPromise, timeoutPromise]) as SessionLike | null;
+    (unsubscribe as (() => void) | null)?.();
     return result;
   }
 
@@ -1450,22 +1455,22 @@ export class SecureAPIClient {
 
   // ============= DASHBOARD API =============
   /**
-   * Get dashboard summary with optional simulation header
+   * Get dashboard summary.
    */
-  async getDashboardSummary(propertyId: string, options?: { simulatedTenant?: string, timestamp?: number }) {
+  async getDashboardSummary(propertyId: string, options?: { month?: number; year?: number }) {
     const queryParams = new URLSearchParams({ property_id: propertyId });
-    if (options?.timestamp) {
-      queryParams.append('_t', options.timestamp.toString());
+    if (options?.month) {
+      queryParams.append('month', options.month.toString());
+    }
+    if (options?.year) {
+      queryParams.append('year', options.year.toString());
     }
 
-    const requestOptions: RequestInit = {};
-    if (options?.simulatedTenant) {
-      requestOptions.headers = {
-        'X-Simulated-Tenant': options.simulatedTenant
-      };
-    }
+    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`);
+  }
 
-    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`, requestOptions);
+  async getDashboardProperties(): Promise<{ items: Array<{ id: string; name: string }> }> {
+    return this.request<{ items: Array<{ id: string; name: string }> }>('/api/v1/dashboard/properties');
   }
 
   async uploadCompanyLogo(logo_url: string) {
