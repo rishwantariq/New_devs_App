@@ -6,11 +6,11 @@ ocean was sometimes seeing sunset's revenue numbers after a refresh. the cache k
 
 ## 2. wrong march totals (sunset)
 
-march numbers didn't match what sunset had. the revenue query had no month filter – it was always returning all-time totals even though the UI says "monthly". also no timezone handling for properties. added month/year params to the dashboard summary api and made the query filter by date. frontend now passes month: 3, year: 2024 for march.
+march numbers didn't match what sunset had. before: the revenue query in reservations.py had no month/year filter – it always returned all-time totals. no property timezone support either, so a booking could land in the wrong month for properties in different timezones. after: added optional month/year params to the dashboard summary api. in calculate_total_revenue we fetch the property's timezone from the db and use _month_window_in_property_tz() to get the correct month start/end in that timezone, then filter check_in_date with those bounds. frontend now passes month: 3, year: 2024.
 
 ## 3. totals off by cents
 
-finance was seeing tiny rounding differences. we were doing float() on the total directly. now we round with Decimal to 2 decimals (ROUND_HALF_UP) before converting to float in the dashboard api.
+finance was seeing tiny rounding differences. before: we did float(revenue_data['total']) directly in dashboard.py, so float arithmetic could drift by a cent or two. after: we round with Decimal(str(total)).quantize(Decimal("0.01"), ROUND_HALF_UP) before converting to float, so we always return exactly 2 decimals.
 
 ## 4. cors blocking login
 

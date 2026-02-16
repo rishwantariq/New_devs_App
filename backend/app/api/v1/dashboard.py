@@ -75,7 +75,7 @@ async def get_dashboard_properties(
             items = [{"id": row.id, "name": row.name} for row in rows]
             return {"items": items}
     except Exception:
-        # Minimal fallback for challenge mode if DB is unavailable.
+        # Minimal fallback for challenge mode if DB is unavailable. i have added this strictly to test locally - with local mode and DB mode.
         fallback = {
             "tenant-a": [
                 {"id": "prop-001", "name": "Beach House Alpha"},
