@@ -31,3 +31,4 @@ the property dropdown used a hardcoded list, so client a could pick client b's p
 ## 8. secureapi breaking with localauth
 
 secureApi.ts had type errors and the supabase.from intercept was blowing up because LocalAuthClient doesn't have a from method. added a guard for that, fixed the session types so it works with both localauth and supabase, and cleaned up the unsubscribe logic.
+Video: https://www.loom.com/share/ca7cf2a5b07a45d1907d516700fc9883
